@@ -9,7 +9,6 @@ use App\Http\Requests\GenerateMinutesRequest;
 use App\Models\Recording;
 use App\Services\Minutes\MinutesGenerator;
 use App\Support\ApiCredentials;
-use App\Support\Markdown;
 use Illuminate\Http\JsonResponse;
 
 class MinutesController extends Controller
@@ -37,11 +36,10 @@ class MinutesController extends Controller
         }
 
         $recording->minutes = $this->generator->generate($recording, $transcript, $apiKey);
+        $recording->minutes_model = (string) config('notulensi.minutes.model');
+        $recording->minutes_generated_at = now();
         $recording->save();
 
-        return response()->json([
-            'recording' => $recording->toPayload(),
-            'minutes_html' => Markdown::toHtml($recording->minutes),
-        ]);
+        return response()->json(['recording' => $recording->toDetail()]);
     }
 }

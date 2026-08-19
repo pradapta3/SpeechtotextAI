@@ -20,17 +20,26 @@
         <input type="file" x-ref="fileInput" class="sr-only" multiple
                accept="audio/*,video/mp4,video/webm,.mp3,.m4a,.wav,.ogg,.flac,.aac,.mp4,.webm"
                @change="addFiles($event.target.files); $event.target.value = ''">
+
+        <p class="mt-2 text-center text-[11px] text-ink-faint">
+            <span x-text="items.length"></span> dari
+            <span x-text="limits.recordings_per_session"></span> rekaman tersimpan
+        </p>
     </div>
 
     <div class="flex flex-wrap gap-2 border-b border-line p-3">
         <button type="button" class="btn btn-primary flex-1"
                 :disabled="processing || pendingItems.length === 0"
                 @click="transcribeAll()">
-            <span x-text="processing ? 'Memproses…' : 'Mulai transkripsi'"></span>
+            <span x-show="!processing">
+                Mulai transkripsi
+                <span x-show="pendingItems.length > 0" x-text="`(${pendingItems.length})`"></span>
+            </span>
+            <span x-show="processing">Memproses…</span>
         </button>
 
         <button type="button" class="btn btn-danger btn-sm" x-show="processing" @click="cancel()">
-            Batalkan
+            Hentikan
         </button>
 
         <button type="button" class="btn btn-ghost btn-sm"
@@ -41,8 +50,7 @@
         </button>
     </div>
 
-    <ul class="scroll-area max-h-[40vh] min-h-0 flex-1 space-y-1 overflow-y-auto p-2 lg:max-h-none"
-        role="list">
+    <ul class="scroll-area max-h-[42vh] min-h-0 flex-1 space-y-1 overflow-y-auto p-2 lg:max-h-none" role="list">
         <template x-if="items.length === 0">
             <li class="px-3 py-8 text-center text-sm text-ink-faint">
                 Belum ada rekaman. Unggah berkas audio untuk memulai.
@@ -51,7 +59,7 @@
 
         <template x-for="item in items" :key="item.key">
             <li>
-                <div class="w-full rounded-lg border p-3 text-left transition-colors"
+                <div class="w-full rounded-lg border p-3 transition-colors"
                      :class="item.key === activeKey
                         ? 'border-accent bg-accent-soft'
                         : 'border-transparent hover:bg-sunken'">
@@ -60,10 +68,14 @@
                                 :aria-current="item.key === activeKey ? 'true' : 'false'"
                                 @click="select(item.key)">
                             <span class="block truncate text-sm font-medium text-ink" x-text="item.name"></span>
-                            <span class="mt-0.5 block text-xs text-ink-faint">
+
+                            <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-faint">
+                                @include('partials.status-badge')
+
+                                <span x-show="item.duration_seconds > 0" x-text="formatDuration(item.duration_seconds)"></span>
                                 <span x-text="formatSize(item.sizeBytes)"></span>
-                                <span aria-hidden="true"> · </span>
-                                <span x-text="item.statusLabel"></span>
+                                <span x-show="item.total_chunks > 0"
+                                      x-text="`${item.completed_chunks}/${item.total_chunks} segmen`"></span>
                             </span>
                         </button>
 
@@ -86,7 +98,10 @@
                         <p class="mt-1 truncate text-[11px] text-ink-faint" x-text="item.message"></p>
                     </div>
 
-                    <p x-show="item.status === 'failed'" class="mt-2 text-[11px] text-danger" x-text="item.error"></p>
+                    <p x-show="item.status === 'failed'" class="mt-2 line-clamp-2 text-[11px] text-danger"
+                       x-text="item.error"></p>
+
+                    <p x-show="item.has_minutes" class="mt-2 text-[11px] text-positive">Notulensi tersedia</p>
                 </div>
             </li>
         </template>

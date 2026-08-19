@@ -51,15 +51,16 @@ class TranscriptionChunkController extends Controller
             $text,
         );
 
-        $recording->status = $recording->completedChunks() >= $recording->total_chunks
-            ? RecordingStatus::Completed
-            : RecordingStatus::Processing;
+        $isComplete = $recording->completedChunks() >= $recording->total_chunks;
+
+        $recording->status = $isComplete ? RecordingStatus::Completed : RecordingStatus::Processing;
+        $recording->transcribed_at = $isComplete ? now() : null;
         $recording->error = null;
         $recording->save();
 
         return response()->json([
             'text' => $text,
-            'recording' => $recording->toPayload(),
+            'recording' => $recording->toDetail(),
         ]);
     }
 }

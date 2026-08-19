@@ -92,6 +92,49 @@ class RecordingTest extends TestCase
             ->assertJsonPath('recordings.0.name', 'milik-saya.mp3');
     }
 
+    public function test_the_list_leaves_out_transcripts(): void
+    {
+        Recording::factory()
+            ->transcribed('Isi rapat yang panjang sekali.')
+            ->create(['owner_key' => self::OWNER]);
+
+        $summary = $this->withSession(['notulensi.owner' => self::OWNER])
+            ->getJson('/api/recordings')
+            ->assertOk()
+            ->assertJsonPath('recordings.0.has_transcript', true)
+            ->json('recordings.0');
+
+        // Daftar bisa berisi puluhan rekaman; transkrip diambil terpisah.
+        $this->assertArrayNotHasKey('transcript', $summary);
+        $this->assertArrayNotHasKey('segments', $summary);
+        $this->assertArrayNotHasKey('minutes', $summary);
+    }
+
+    public function test_it_returns_the_detail_of_one_recording(): void
+    {
+        $recording = Recording::factory()
+            ->transcribed('Rapat dibuka pukul sembilan.')
+            ->create(['owner_key' => self::OWNER, 'language' => 'id']);
+
+        $this->withSession(['notulensi.owner' => self::OWNER])
+            ->getJson("/api/recordings/{$recording->id}")
+            ->assertOk()
+            ->assertJsonPath('recording.transcript', 'Rapat dibuka pukul sembilan.')
+            ->assertJsonPath('recording.word_count', 4)
+            ->assertJsonPath('recording.language_label', 'Indonesia')
+            ->assertJsonPath('recording.segments.0.start', 0)
+            ->assertJsonPath('recording.segments.0.end', 120);
+    }
+
+    public function test_it_hides_the_detail_of_another_session(): void
+    {
+        $recording = Recording::factory()->transcribed()->create(['owner_key' => 'orang-lain']);
+
+        $this->withSession(['notulensi.owner' => self::OWNER])
+            ->getJson("/api/recordings/{$recording->id}")
+            ->assertNotFound();
+    }
+
     public function test_it_hides_recordings_owned_by_another_session(): void
     {
         $recording = Recording::factory()->create(['owner_key' => 'orang-lain']);

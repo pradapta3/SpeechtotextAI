@@ -64,6 +64,7 @@ async function request(method, url, { body, signal } = {}) {
 }
 
 export const api = {
+    showRecording: (id) => request('GET', `/api/recordings/${id}`),
     createRecording: (data) => request('POST', '/api/recordings', { body: data }),
     updateRecording: (id, data) => request('PATCH', `/api/recordings/${id}`, { body: data }),
     deleteRecording: (id) => request('DELETE', `/api/recordings/${id}`),

@@ -29,6 +29,8 @@ decode audio (Web Audio API)
 - **Pemotongan di browser.** Berkas audio didekode, dipotong, dan di-*resample* menjadi WAV 16 kHz
   mono sebelum diunggah. Ukuran unggahan jadi ±1,9 MB per menit audio, sehingga berkas rapat berjam-jam
   tetap bisa diproses tanpa menyentuh batas ukuran unggahan.
+- **Daftar ringan, detail sesuai kebutuhan.** Halaman awal hanya memuat ringkasan tiap rekaman;
+  transkrip, segmen, dan notulensi diambil lewat `GET /api/recordings/{id}` saat rekaman dibuka.
 - **API key hanya di server.** Browser tidak pernah memegang API key. Bila pengguna mengisi key
   sendiri di halaman Pengaturan, key itu dienkripsi dengan `APP_KEY` dan disimpan di session server —
   bukan di `localStorage`.
@@ -38,6 +40,22 @@ decode audio (Web Audio API)
   browser mengulang segmen yang sama setelah menunggu — proses tidak diulang dari awal.
 
 ---
+
+## Antarmuka
+
+Tiap bagian layar dibuat untuk menjawab pertanyaan yang muncul saat menunggu proses panjang:
+
+| Bagian | Yang ditampilkan |
+|---|---|
+| Kepala berkas | durasi, ukuran, bahasa, segmen selesai/total, jumlah kata, waktu ditambahkan |
+| Kartu progres | segmen ke berapa, persentase, waktu berjalan, perkiraan sisa, rata-rata per segmen |
+| Statistik transkrip | jumlah kata, karakter, jumlah × durasi segmen, waktu selesai |
+| Tampilan per segmen | penanda waktu `00:00–02:00` untuk mencocokkan hasil dengan audio asli |
+| Daftar periksa | langkah yang sudah beres dan yang belum, beserta petunjuk tindakannya |
+| Jejak notulensi | model yang dipakai, waktu pembuatan, panjang hasil |
+| Pengaturan | sumber tiap API key, model aktif, ukuran per segmen, permintaan per jam audio, batas unggah server |
+
+Tema mengikuti sistem secara bawaan dan bisa dikunci ke terang atau gelap.
 
 ## Kebutuhan
 
@@ -107,7 +125,7 @@ post_max_size = 24M
 ## Pengujian
 
 ```bash
-php artisan test          # 38 pengujian: HTTP, integrasi Groq & Anthropic, model, prompt
+php artisan test          # 42 pengujian: HTTP, integrasi Groq & Anthropic, model, prompt
 ./vendor/bin/pint         # format kode
 npm run build             # kompilasi aset
 ```
@@ -160,6 +178,8 @@ tests/
 | Hasil hilang saat halaman dimuat ulang | Transkrip & notulensi tersimpan di basis data |
 | Tab tanpa peran ARIA, dropzone tak bisa diakses keyboard | `role="tab"`, dropzone berupa `<button>`, live region, fokus terlihat |
 | Hanya tema gelap | Tema terang/gelap/ikut sistem |
+| Status berupa ikon emoji tanpa keterangan | Lencana status, metadata berkas, statistik, dan perkiraan waktu selesai |
+| Transkrip hanya satu blok teks | Bisa dilihat per segmen dengan penanda waktu |
 
 ---
 

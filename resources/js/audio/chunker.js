@@ -61,6 +61,9 @@ export async function renderSegment(audioBuffer, startSeconds, endSeconds) {
     return encodeWav(await offline.startRendering());
 }
 
+/** Panjang segmen yang lebih pendek dari ini tidak layak dikirim ke API. */
+const MIN_SEGMENT_SECONDS = 0.25;
+
 /** Membangun daftar segmen (metadata saja — audio dirender saat dibutuhkan). */
 export function planSegments(durationSeconds, chunkSeconds) {
     const total = chunkCount(durationSeconds, chunkSeconds);
@@ -69,12 +72,16 @@ export function planSegments(durationSeconds, chunkSeconds) {
         index,
         start: index * chunkSeconds,
         end: Math.min((index + 1) * chunkSeconds, durationSeconds),
-    }));
+    }))
+        // Durasi yang tidak habis dibagi bisa menyisakan potongan beberapa
+        // milidetik di ujung; mengirimnya hanya membuang satu permintaan API.
+        .filter((segment, index) => index === 0 || segment.end - segment.start >= MIN_SEGMENT_SECONDS)
+        .map((segment, index) => ({ ...segment, index }));
 }
 
 export function formatDuration(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) {
-        return '0d';
+        return '0 dtk';
     }
 
     const hours = Math.floor(seconds / 3600);
@@ -82,8 +89,12 @@ export function formatDuration(seconds) {
     const rest = Math.floor(seconds % 60);
 
     if (hours > 0) {
-        return `${hours}j ${minutes}m`;
+        return minutes > 0 ? `${hours} jam ${minutes} mnt` : `${hours} jam`;
     }
 
-    return minutes > 0 ? `${minutes}m ${rest}d` : `${rest}d`;
+    if (minutes > 0) {
+        return rest > 0 ? `${minutes} mnt ${rest} dtk` : `${minutes} mnt`;
+    }
+
+    return `${rest} dtk`;
 }

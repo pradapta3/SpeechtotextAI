@@ -4,6 +4,29 @@ import { decodeAudioFile, formatDuration, planSegments, renderSegment } from './
 const ACCEPTED_EXTENSIONS = ['mp3', 'mp4', 'm4a', 'wav', 'ogg', 'oga', 'webm', 'mpeg', 'mpga', 'flac', 'aac'];
 const MAX_CHUNK_ATTEMPTS = 4;
 
+/** Field payload detail yang disalin apa adanya ke item di sisi klien. */
+const DETAIL_FIELDS = [
+    'status',
+    'status_label',
+    'progress',
+    'chunk_seconds',
+    'total_chunks',
+    'completed_chunks',
+    'has_transcript',
+    'has_minutes',
+    'error',
+    'transcribed_at',
+    'duration_seconds',
+    'language_label',
+    'segments',
+    'transcript',
+    'word_count',
+    'minutes',
+    'minutes_html',
+    'minutes_model',
+    'minutes_generated_at',
+];
+
 let sequence = 0;
 
 function nextKey() {
@@ -17,51 +40,69 @@ function isSupported(file) {
     return file.type.startsWith('audio/') || file.type.startsWith('video/') || ACCEPTED_EXTENSIONS.includes(extension);
 }
 
-function itemFromPayload(payload) {
-    return {
-        key: nextKey(),
-        recordingId: payload.id,
-        name: payload.name,
-        sizeBytes: payload.size_bytes,
-        durationSeconds: payload.duration_seconds,
-        status: payload.status,
-        statusLabel: payload.status_label,
-        progress: payload.progress,
-        message: '',
-        error: payload.error,
-        transcript: payload.transcript,
-        minutes: payload.minutes,
-        minutesHtml: payload.minutes_html ?? '',
-        meeting: {
-            meeting_title: payload.meeting?.title ?? '',
-            meeting_date: payload.meeting?.date ?? '',
-            meeting_attendees: payload.meeting?.attendees ?? '',
-            meeting_context: payload.meeting?.context ?? '',
-        },
-    };
-}
-
-function itemFromFile(file) {
+function baseItem() {
     return {
         key: nextKey(),
         recordingId: null,
-        name: file.name,
-        sizeBytes: file.size,
-        durationSeconds: 0,
-        status: 'pending',
-        statusLabel: 'Menunggu',
-        progress: 0,
+        loaded: false,
         message: '',
-        error: null,
+        run: null,
+        segments: [],
         transcript: '',
+        word_count: 0,
         minutes: null,
-        minutesHtml: '',
+        minutes_html: '',
+        minutes_model: null,
+        minutes_generated_at: null,
         meeting: {
             meeting_title: '',
             meeting_date: '',
             meeting_attendees: '',
             meeting_context: '',
         },
+    };
+}
+
+function itemFromSummary(payload) {
+    return {
+        ...baseItem(),
+        recordingId: payload.id,
+        name: payload.name,
+        sizeBytes: payload.size_bytes,
+        duration_seconds: payload.duration_seconds,
+        language_label: payload.language_label,
+        status: payload.status,
+        status_label: payload.status_label,
+        progress: payload.progress,
+        chunk_seconds: payload.chunk_seconds,
+        total_chunks: payload.total_chunks,
+        completed_chunks: payload.completed_chunks,
+        has_transcript: payload.has_transcript,
+        has_minutes: payload.has_minutes,
+        error: payload.error,
+        created_at: payload.created_at,
+        transcribed_at: payload.transcribed_at,
+    };
+}
+
+function itemFromFile(file, language) {
+    return {
+        ...baseItem(),
+        name: file.name,
+        sizeBytes: file.size,
+        duration_seconds: 0,
+        language_label: language,
+        status: 'pending',
+        status_label: 'Menunggu',
+        progress: 0,
+        total_chunks: 0,
+        completed_chunks: 0,
+        has_transcript: false,
+        has_minutes: false,
+        error: null,
+        created_at: new Date().toISOString(),
+        transcribed_at: null,
+        loaded: true,
     };
 }
 
@@ -72,26 +113,28 @@ export default function notulensi(initialState) {
 
     return {
         tab: 'transkrip',
-        items: initialState.recordings.map(itemFromPayload),
+        transcriptView: 'gabungan',
+        items: initialState.recordings.map(itemFromSummary),
         activeKey: null,
         processing: false,
         generating: false,
+        loadingDetail: false,
         dragging: false,
         controller: null,
+        clock: Date.now(),
+        clockTimer: null,
         announcement: '',
         toasts: [],
         settings: initialState.settings,
         limits: initialState.limits,
+        models: initialState.models,
         keyForm: { groq_key: '', anthropic_key: '' },
         savingSettings: false,
 
         init() {
-            this.activeKey = this.items[0]?.key ?? null;
-            this.$watch('items', () => {
-                if (!this.items.some((item) => item.key === this.activeKey)) {
-                    this.activeKey = this.items[0]?.key ?? null;
-                }
-            });
+            if (this.items.length > 0) {
+                this.select(this.items[0].key);
+            }
         },
 
         /* ---------------------------------------------------------- daftar */
@@ -108,9 +151,86 @@ export default function notulensi(initialState) {
             return Boolean(this.active?.transcript);
         },
 
-        select(key) {
+        get readiness() {
+            return [
+                {
+                    label: 'API key transkripsi tersedia',
+                    done: this.providerReady('groq'),
+                    hint: 'Isi Groq API key di tab Pengaturan.',
+                },
+                {
+                    label: 'Berkas audio diunggah',
+                    done: this.items.length > 0,
+                    hint: 'Seret berkas rapat ke panel kiri.',
+                },
+                {
+                    label: 'Transkrip selesai',
+                    done: Boolean(this.active?.has_transcript),
+                    hint: 'Klik "Mulai transkripsi" setelah berkas terunggah.',
+                },
+                {
+                    label: 'Notulensi dibuat',
+                    done: Boolean(this.active?.has_minutes),
+                    hint: 'Butuh Anthropic API key dan transkrip yang sudah jadi.',
+                },
+            ];
+        },
+
+        /** Statistik proses berjalan: dipakai untuk progres, waktu tempuh, dan perkiraan sisa. */
+        get runStats() {
+            const run = this.active?.run;
+
+            if (!run) {
+                return null;
+            }
+
+            const elapsed = Math.max(0, (this.clock - run.startedAt) / 1000);
+            const average = run.done > 0 ? elapsed / run.done : null;
+            const remaining = Math.max(0, run.total - run.done);
+
+            return {
+                done: run.done,
+                total: run.total,
+                elapsed,
+                average,
+                eta: average !== null && remaining > 0 ? average * remaining : null,
+            };
+        },
+
+        async select(key) {
             this.activeKey = key;
-            this.tab = 'transkrip';
+            await this.loadDetail(this.active);
+        },
+
+        async loadDetail(item) {
+            if (!item || item.loaded || !item.recordingId) {
+                return;
+            }
+
+            this.loadingDetail = true;
+
+            try {
+                const { recording } = await api.showRecording(item.recordingId);
+                this.applyDetail(item, recording);
+            } catch (error) {
+                this.reportError(error);
+            } finally {
+                this.loadingDetail = false;
+            }
+        },
+
+        applyDetail(item, payload) {
+            for (const field of DETAIL_FIELDS) {
+                if (field in payload) {
+                    item[field] = payload[field];
+                }
+            }
+
+            if (payload.meeting) {
+                item.meeting = { ...item.meeting, ...payload.meeting };
+            }
+
+            item.loaded = true;
         },
 
         addFiles(fileList) {
@@ -128,18 +248,32 @@ export default function notulensi(initialState) {
                 return;
             }
 
+            const language = this.settings.languages[this.settings.preferences.language];
+
             accepted.slice(0, room).forEach((file) => {
-                const item = itemFromFile(file);
+                const item = itemFromFile(file, language);
                 files.set(item.key, file);
-                this.items.push(item);
+                this.items.unshift(item);
             });
 
-            this.activeKey ??= this.items[0]?.key ?? null;
+            this.activeKey = this.items[0].key;
+            this.tab = 'transkrip';
         },
 
         async removeItem(item) {
+            if (item.status === 'processing') {
+                this.toast('Hentikan transkripsi dulu sebelum menghapus rekaman ini.', 'caution');
+
+                return;
+            }
+
             files.delete(item.key);
             this.items = this.items.filter((candidate) => candidate.key !== item.key);
+
+            if (this.activeKey === item.key) {
+                this.activeKey = this.items[0]?.key ?? null;
+                await this.loadDetail(this.active);
+            }
 
             if (item.recordingId) {
                 try {
@@ -175,6 +309,7 @@ export default function notulensi(initialState) {
 
             this.processing = true;
             this.controller = new AbortController();
+            this.startClock();
 
             try {
                 for (const item of queue) {
@@ -187,6 +322,7 @@ export default function notulensi(initialState) {
             } finally {
                 this.processing = false;
                 this.controller = null;
+                this.stopClock();
             }
         },
 
@@ -195,21 +331,28 @@ export default function notulensi(initialState) {
             const signal = this.controller.signal;
 
             this.activeKey = item.key;
+            this.tab = 'transkrip';
             item.status = 'processing';
-            item.statusLabel = 'Diproses';
+            item.status_label = 'Diproses';
             item.error = null;
             item.transcript = '';
-            this.setMessage(item, 'Membaca berkas audio…');
+            item.segments = [];
+            this.setMessage(item, 'Membaca dan mendekode berkas audio…');
 
             try {
                 const buffer = await decodeAudioFile(file);
                 const chunkSeconds = this.settings.preferences.chunk_seconds;
                 const segments = planSegments(buffer.duration, chunkSeconds);
 
-                item.durationSeconds = buffer.duration;
+                item.duration_seconds = buffer.duration;
+                item.total_chunks = segments.length;
+                item.run = { startedAt: Date.now(), done: 0, total: segments.length };
+                this.clock = Date.now();
+
                 this.setMessage(
                     item,
-                    `Durasi ${formatDuration(buffer.duration)} — dibagi menjadi ${segments.length} segmen.`,
+                    `Durasi ${formatDuration(buffer.duration)} — dibagi menjadi ${segments.length} segmen ` +
+                        `berdurasi ${chunkSeconds} detik.`,
                 );
 
                 const { recording } = await api.createRecording({
@@ -222,6 +365,13 @@ export default function notulensi(initialState) {
                 });
 
                 item.recordingId = recording.id;
+                this.applyDetail(item, recording);
+
+                // Rekaman baru lahir dengan status "pending" di server; kembalikan
+                // ke status lokal agar kartu progres tidak berkedip ke "Menunggu"
+                // sampai segmen pertama selesai.
+                item.status = 'processing';
+                item.status_label = 'Diproses';
 
                 for (const segment of segments) {
                     if (signal.aborted) {
@@ -230,22 +380,21 @@ export default function notulensi(initialState) {
 
                     this.setMessage(
                         item,
-                        `Segmen ${segment.index + 1}/${segments.length} — ` +
-                            `${formatDuration(segment.start)} s/d ${formatDuration(segment.end)}`,
+                        `Segmen ${segment.index + 1} dari ${segments.length} · ` +
+                            `menit ${this.formatClock(segment.start)}–${this.formatClock(segment.end)}`,
                     );
 
                     const blob = await renderSegment(buffer, segment.start, segment.end);
                     const response = await this.sendChunkWithRetry(item, segment, blob, signal);
 
-                    item.transcript = response.recording.transcript;
-                    item.progress = response.recording.progress;
-                    item.status = response.recording.status;
-                    item.statusLabel = response.recording.status_label;
+                    this.applyDetail(item, response.recording);
+                    item.run = { ...item.run, done: segment.index + 1 };
+                    this.clock = Date.now();
                 }
 
-                item.progress = 100;
-                this.setMessage(item, 'Selesai.');
-                this.toast(`Transkrip "${item.name}" selesai.`, 'positive');
+                this.setMessage(item, `Selesai dalam ${formatDuration(this.runStats?.elapsed ?? 0)}.`);
+                item.run = null;
+                this.toast(`Transkrip "${item.name}" selesai — ${item.word_count} kata.`, 'positive');
             } catch (error) {
                 await this.handleTranscriptionError(item, error);
             }
@@ -269,7 +418,11 @@ export default function notulensi(initialState) {
                     }
 
                     const wait = error.retryAfter ?? 20;
-                    this.setMessage(item, `Kena batas kuota Groq — menunggu ${wait} detik lalu melanjutkan…`);
+                    this.setMessage(
+                        item,
+                        `Kuota Groq penuh — menunggu ${wait} detik lalu mengulang segmen ` +
+                            `${segment.index + 1} (percobaan ${attempt + 1} dari ${MAX_CHUNK_ATTEMPTS}).`,
+                    );
                     await sleep(wait, signal);
                 }
             }
@@ -279,8 +432,9 @@ export default function notulensi(initialState) {
             const cancelled = error.name === 'AbortError';
 
             item.status = cancelled ? 'cancelled' : 'failed';
-            item.statusLabel = cancelled ? 'Dibatalkan' : 'Gagal';
-            item.error = cancelled ? 'Transkripsi dibatalkan.' : error.message;
+            item.status_label = cancelled ? 'Dibatalkan' : 'Gagal';
+            item.error = cancelled ? 'Transkripsi dihentikan sebelum selesai.' : error.message;
+            item.run = null;
             this.setMessage(item, item.error);
 
             if (!cancelled) {
@@ -301,7 +455,18 @@ export default function notulensi(initialState) {
 
         cancel() {
             this.controller?.abort();
-            this.toast('Menghentikan transkripsi…', 'caution');
+            this.toast('Menghentikan transkripsi setelah segmen berjalan…', 'caution');
+        },
+
+        startClock() {
+            this.clockTimer ??= setInterval(() => {
+                this.clock = Date.now();
+            }, 1000);
+        },
+
+        stopClock() {
+            clearInterval(this.clockTimer);
+            this.clockTimer = null;
         },
 
         /* ------------------------------------------------------ notulensi */
@@ -318,9 +483,8 @@ export default function notulensi(initialState) {
             this.generating = true;
 
             try {
-                const response = await api.generateMinutes(item.recordingId, item.meeting);
-                item.minutes = response.recording.minutes;
-                item.minutesHtml = response.minutes_html;
+                const { recording } = await api.generateMinutes(item.recordingId, item.meeting);
+                this.applyDetail(item, recording);
                 this.toast('Notulensi berhasil dibuat.', 'positive');
             } catch (error) {
                 this.reportError(error);
@@ -371,6 +535,27 @@ export default function notulensi(initialState) {
             return Boolean(state?.user_key || state?.server_key);
         },
 
+        providerSource(provider) {
+            const state = this.settings.providers[provider];
+
+            if (state?.user_key) {
+                return `Key Anda (${state.masked})`;
+            }
+
+            return state?.server_key ? 'Key server' : 'Belum diatur';
+        },
+
+        /* ------------------------------------------------- estimasi biaya */
+
+        get segmentSizeMb() {
+            // 16 kHz × 16 bit mono = 32 KB per detik.
+            return ((this.settings.preferences.chunk_seconds * 32) / 1024).toFixed(1);
+        },
+
+        get requestsPerHour() {
+            return Math.ceil(3600 / this.settings.preferences.chunk_seconds);
+        },
+
         /* ---------------------------------------------------------- utils */
 
         setMessage(item, message) {
@@ -410,6 +595,8 @@ export default function notulensi(initialState) {
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         },
 
+        /* --------------------------------------------------- pemformatan */
+
         formatSize(bytes) {
             if (bytes >= 1024 * 1024) {
                 return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -419,6 +606,28 @@ export default function notulensi(initialState) {
         },
 
         formatDuration,
+
+        formatClock(seconds) {
+            const total = Math.max(0, Math.round(seconds));
+            const minutes = String(Math.floor(total / 60)).padStart(2, '0');
+
+            return `${minutes}:${String(total % 60).padStart(2, '0')}`;
+        },
+
+        formatNumber(value) {
+            return new Intl.NumberFormat('id-ID').format(value ?? 0);
+        },
+
+        formatDateTime(iso) {
+            if (!iso) {
+                return '—';
+            }
+
+            return new Intl.DateTimeFormat('id-ID', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+            }).format(new Date(iso));
+        },
 
         reportError(error) {
             if (error.name === 'AbortError') {

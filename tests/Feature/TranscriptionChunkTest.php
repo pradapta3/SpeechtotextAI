@@ -58,6 +58,18 @@ class TranscriptionChunkTest extends TestCase
             ->assertJsonPath('recording.transcript', 'Bagian pertama. Bagian kedua.');
     }
 
+    public function test_it_stamps_the_completion_time_only_when_finished(): void
+    {
+        Http::fake(['api.groq.com/*' => Http::response('Bagian audio.', 200)]);
+        $recording = Recording::factory()->create(['owner_key' => self::OWNER, 'total_chunks' => 2]);
+
+        $this->postChunk($recording, index: 0)->assertOk();
+        $this->assertNull($recording->fresh()->transcribed_at);
+
+        $this->postChunk($recording, index: 1, start: 120, end: 240)->assertOk();
+        $this->assertNotNull($recording->fresh()->transcribed_at);
+    }
+
     public function test_resending_a_chunk_replaces_it_instead_of_duplicating(): void
     {
         Http::fake(['api.groq.com/*' => Http::sequence()

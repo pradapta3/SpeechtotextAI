@@ -16,6 +16,7 @@ Route::get('/', HomeController::class)->name('home');
  */
 Route::prefix('api')->name('api.')->group(function (): void {
     Route::get('recordings', [RecordingController::class, 'index'])->name('recordings.index');
+    Route::get('recordings/{recording}', [RecordingController::class, 'show'])->name('recordings.show');
     Route::post('recordings', [RecordingController::class, 'store'])->name('recordings.store');
     Route::patch('recordings/{recording}', [RecordingController::class, 'update'])->name('recordings.update');
     Route::delete('recordings/{recording}', [RecordingController::class, 'destroy'])->name('recordings.destroy');

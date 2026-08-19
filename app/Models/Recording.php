@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Enums\RecordingStatus;
+use App\Support\Markdown;
 use Database\Factories\RecordingFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
  * @property int $id
@@ -52,6 +54,8 @@ class Recording extends Model
             'chunk_seconds' => 'integer',
             'total_chunks' => 'integer',
             'meeting_date' => 'date',
+            'transcribed_at' => 'datetime',
+            'minutes_generated_at' => 'datetime',
         ];
     }
 
@@ -67,25 +71,33 @@ class Recording extends Model
     }
 
     /**
-     * Simpan hasil satu segmen. Segmen ditulis berdasarkan indeks sehingga
-     * pengiriman ulang (retry setelah rate limit) tidak menduplikasi teks.
+     * Simpan hasil satu segmen.
+     *
+     * Segmen dikunci pada indeksnya, sehingga pengiriman ulang (mis. setelah
+     * rate limit) menimpa segmen lama alih-alih menduplikasi teks. Pembaruan
+     * dibungkus transaksi dengan penguncian baris karena kolom `segments`
+     * ditulis dengan pola baca-ubah-tulis: dua permintaan yang tumpang tindih
+     * bisa saling menghapus hasil tanpa penguncian.
      */
     public function storeSegment(int $index, float $startSeconds, float $endSeconds, string $text): void
     {
-        $segments = collect($this->segments)
-            ->keyBy('index')
-            ->put($index, [
-                'index' => $index,
-                'start' => round($startSeconds, 2),
-                'end' => round($endSeconds, 2),
-                'text' => $text,
-            ])
-            ->sortKeys()
-            ->values()
-            ->all();
+        DB::transaction(function () use ($index, $startSeconds, $endSeconds, $text): void {
+            $fresh = static::query()->lockForUpdate()->findOrFail($this->getKey());
 
-        $this->segments = $segments;
-        $this->save();
+            $this->segments = collect($fresh->segments)
+                ->keyBy('index')
+                ->put($index, [
+                    'index' => $index,
+                    'start' => round($startSeconds, 2),
+                    'end' => round($endSeconds, 2),
+                    'text' => $text,
+                ])
+                ->sortKeys()
+                ->values()
+                ->all();
+
+            $this->save();
+        });
     }
 
     public function transcript(): string
@@ -116,8 +128,26 @@ class Recording extends Model
         return (int) min(99, floor($this->completedChunks() / $this->total_chunks * 100));
     }
 
-    /** @return array<string, mixed> */
-    public function toPayload(): array
+    public function languageLabel(): string
+    {
+        return config('notulensi.languages')[$this->language] ?? $this->language;
+    }
+
+    public function wordCount(): int
+    {
+        $transcript = trim($this->transcript());
+
+        return $transcript === '' ? 0 : count(preg_split('/\s+/u', $transcript) ?: []);
+    }
+
+    /**
+     * Ringkasan untuk daftar rekaman: sengaja tanpa transkrip dan notulensi
+     * agar memuat lima puluh rekaman tidak berarti mengirim lima puluh
+     * transkrip panjang ke browser.
+     *
+     * @return array<string, mixed>
+     */
+    public function toSummary(): array
     {
         return [
             'id' => $this->id,
@@ -125,21 +155,48 @@ class Recording extends Model
             'size_bytes' => $this->size_bytes,
             'duration_seconds' => $this->duration_seconds,
             'language' => $this->language,
+            'language_label' => $this->languageLabel(),
+            'chunk_seconds' => $this->chunk_seconds,
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
             'total_chunks' => $this->total_chunks,
             'completed_chunks' => $this->completedChunks(),
             'progress' => $this->progressPercent(),
-            'transcript' => $this->transcript(),
-            'minutes' => $this->minutes,
+            'has_transcript' => $this->completedChunks() > 0,
+            'has_minutes' => filled($this->minutes),
             'error' => $this->error,
-            'meeting' => [
-                'title' => $this->meeting_title,
-                'date' => $this->meeting_date?->toDateString(),
-                'attendees' => $this->meeting_attendees,
-                'context' => $this->meeting_context,
-            ],
             'created_at' => $this->created_at?->toIso8601String(),
+            'transcribed_at' => $this->transcribed_at?->toIso8601String(),
         ];
+    }
+
+    /** @return array<string, mixed> */
+    public function toDetail(): array
+    {
+        return array_merge($this->toSummary(), [
+            'loaded' => true,
+            'segments' => collect($this->segments)
+                ->sortBy('index')
+                ->map(fn (array $segment): array => [
+                    'index' => $segment['index'],
+                    'start' => $segment['start'],
+                    'end' => $segment['end'],
+                    'text' => $segment['text'],
+                ])
+                ->values()
+                ->all(),
+            'transcript' => $this->transcript(),
+            'word_count' => $this->wordCount(),
+            'minutes' => $this->minutes,
+            'minutes_html' => Markdown::toHtml($this->minutes),
+            'minutes_model' => $this->minutes_model,
+            'minutes_generated_at' => $this->minutes_generated_at?->toIso8601String(),
+            'meeting' => [
+                'meeting_title' => $this->meeting_title,
+                'meeting_date' => $this->meeting_date?->toDateString(),
+                'meeting_attendees' => $this->meeting_attendees,
+                'meeting_context' => $this->meeting_context,
+            ],
+        ]);
     }
 }

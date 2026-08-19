@@ -23,8 +23,14 @@ class RecordingController extends Controller
                 ->ownedBy($this->owner->key())
                 ->latest('id')
                 ->get()
-                ->map->toPayload(),
+                ->map->toSummary(),
         ]);
+    }
+
+    /** Transkrip dan notulensi hanya diambil saat rekaman dibuka. */
+    public function show(Recording $recording): JsonResponse
+    {
+        return response()->json(['recording' => $recording->toDetail()]);
     }
 
     public function store(StoreRecordingRequest $request): JsonResponse
@@ -42,7 +48,7 @@ class RecordingController extends Controller
         $recording->owner_key = $ownerKey;
         $recording->save();
 
-        return response()->json(['recording' => $recording->toPayload()], 201);
+        return response()->json(['recording' => $recording->toDetail()], 201);
     }
 
     public function update(UpdateRecordingRequest $request, Recording $recording): JsonResponse
@@ -59,7 +65,7 @@ class RecordingController extends Controller
 
         $recording->save();
 
-        return response()->json(['recording' => $recording->toPayload()]);
+        return response()->json(['recording' => $recording->toDetail()]);
     }
 
     public function destroy(Recording $recording): JsonResponse

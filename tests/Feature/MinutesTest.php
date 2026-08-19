@@ -37,11 +37,17 @@ class MinutesTest extends TestCase
             ]);
 
         $response->assertOk()
-            ->assertJsonPath('recording.meeting.title', 'Rapat Anggaran')
-            ->assertJsonPath('minutes_html', fn (string $html): bool => str_contains($html, '<h1>Notulensi Rapat</h1>')
+            ->assertJsonPath('recording.meeting.meeting_title', 'Rapat Anggaran')
+            ->assertJsonPath('recording.minutes_html', fn (string $html): bool => str_contains($html, '<h1>Notulensi Rapat</h1>')
                 && str_contains($html, '<li>Anggaran kuartal III</li>'));
 
-        $this->assertStringContainsString('# Notulensi Rapat', (string) $recording->fresh()->minutes);
+        // Jejak pembuatan ikut tersimpan supaya antarmuka bisa menerangkan
+        // notulensi ini dibuat kapan dan dengan model apa.
+        $response->assertJsonPath('recording.minutes_model', config('notulensi.minutes.model'));
+
+        $fresh = $recording->fresh();
+        $this->assertStringContainsString('# Notulensi Rapat', (string) $fresh->minutes);
+        $this->assertNotNull($fresh->minutes_generated_at);
     }
 
     public function test_it_strips_raw_html_from_the_model_output(): void
@@ -55,7 +61,7 @@ class MinutesTest extends TestCase
         $this->withSession(['notulensi.owner' => self::OWNER])
             ->postJson("/api/recordings/{$recording->id}/minutes")
             ->assertOk()
-            ->assertJsonPath('minutes_html', fn (string $html): bool => ! str_contains($html, '<script>')
+            ->assertJsonPath('recording.minutes_html', fn (string $html): bool => ! str_contains($html, '<script>')
                 && str_contains($html, '<h1>Notulensi</h1>'));
     }
 
