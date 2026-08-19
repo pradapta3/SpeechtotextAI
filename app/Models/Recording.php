@@ -74,10 +74,13 @@ class Recording extends Model
      * Simpan hasil satu segmen.
      *
      * Segmen dikunci pada indeksnya, sehingga pengiriman ulang (mis. setelah
-     * rate limit) menimpa segmen lama alih-alih menduplikasi teks. Pembaruan
-     * dibungkus transaksi dengan penguncian baris karena kolom `segments`
-     * ditulis dengan pola baca-ubah-tulis: dua permintaan yang tumpang tindih
-     * bisa saling menghapus hasil tanpa penguncian.
+     * rate limit) menimpa segmen lama alih-alih menduplikasi teks.
+     *
+     * Kolom `segments` ditulis dengan pola baca-ubah-tulis, jadi dua permintaan
+     * yang tumpang tindih bisa saling menghapus hasil. Transaksi menutup celah
+     * itu: pada MySQL/PostgreSQL lewat `lockForUpdate()`, dan pada SQLite —
+     * yang mengabaikan klausa tersebut — lewat mode transaksi IMMEDIATE yang
+     * disetel di config/database.php.
      */
     public function storeSegment(int $index, float $startSeconds, float $endSeconds, string $text): void
     {

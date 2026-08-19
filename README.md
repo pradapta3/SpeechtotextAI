@@ -41,6 +41,33 @@ decode audio (Web Audio API)
 
 ---
 
+## Beberapa pengguna sekaligus
+
+Aplikasi ini tidak memakai login, tetapi tiap browser tetap terpisah penuh:
+
+- **Kepemilikan.** Setiap browser mendapat kunci acak (UUID) di session server. Rekaman diikat ke
+  kunci itu, dan pencarian rekaman selalu dibatasi kunci milik pemanggil — membuka id rekaman orang
+  lain menghasilkan 404, bukan transkripnya.
+- **Preferensi dan API key** (bahasa, durasi segmen, key milik pengguna) juga per session.
+- **Penulisan bersamaan.** Kolom segmen ditulis dengan pola baca-ubah-tulis di dalam transaksi yang
+  membaca ulang datanya, sehingga dua permintaan yang tumpang tindih tidak saling menghapus hasil.
+- **SQLite disetel untuk banyak penulis** (`WAL`, `busy_timeout`, transaksi `IMMEDIATE` — lihat
+  `config/database.php`). Tanpa setelan ini, unggahan segmen dari dua orang serentak gagal dengan
+  `database is locked`.
+
+Uji yang dijalankan: dua sesi browser mengunggah berkas berbeda dan mentranskripsikannya bersamaan —
+masing-masing hanya melihat rekamannya sendiri; lalu 10 unggahan segmen paralel ke satu rekaman —
+seluruh 10 segmen tersimpan tanpa satu pun hilang.
+
+Catatan penerapan:
+
+| Hal | Anjuran |
+|---|---|
+| Server | `php artisan serve` hanya melayani satu permintaan pada satu waktu. Untuk dipakai bersama, jalankan di belakang nginx + PHP-FPM, atau setel `PHP_CLI_SERVER_WORKERS`. |
+| Basis data | SQLite cukup untuk satu tim kecil. Untuk puluhan pengguna serentak, pindah ke MySQL/PostgreSQL — cukup ganti `DB_CONNECTION`. |
+| Masa session | `SESSION_LIFETIME` menentukan berapa lama riwayat rekaman tetap bisa dibuka (bawaan repo ini 14 hari). |
+| Kuota API | Bila memakai satu key server, seluruh pengguna berbagi kuota Groq/Anthropic yang sama. |
+
 ## Antarmuka
 
 Tiap bagian layar dibuat untuk menjawab pertanyaan yang muncul saat menunggu proses panjang:
@@ -125,7 +152,7 @@ post_max_size = 24M
 ## Pengujian
 
 ```bash
-php artisan test          # 42 pengujian: HTTP, integrasi Groq & Anthropic, model, prompt
+php artisan test          # 44 pengujian: HTTP, integrasi Groq & Anthropic, model, prompt
 ./vendor/bin/pint         # format kode
 npm run build             # kompilasi aset
 ```
