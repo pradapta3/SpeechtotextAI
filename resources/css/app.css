@@ -1,0 +1,188 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@source '../views';
+@source '../js';
+@source '../../storage/framework/views/*.php';
+
+/* Tema gelap dikendalikan lewat class pada <html>, bukan hanya media query,
+   supaya tombol ganti tema bisa menimpa preferensi sistem. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  --paper: #f6f5f1;
+  --surface: #ffffff;
+  --surface-sunken: #efeee9;
+  --line: #e0dfd8;
+  --line-strong: #cfcdc3;
+  --ink: #1a1c1b;
+  --ink-soft: #5d635f;
+  --ink-faint: #8b918c;
+  --accent: #10695a;
+  --accent-hover: #0c5348;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3efeb;
+  --positive: #1c7a4f;
+  --caution: #9a5b13;
+  --danger: #a53232;
+  --danger-soft: #fbecec;
+}
+
+html.dark {
+  color-scheme: dark;
+
+  --paper: #0f1413;
+  --surface: #161d1b;
+  --surface-sunken: #1d2624;
+  --line: #29342f;
+  --line-strong: #3a4842;
+  --ink: #e7ecea;
+  --ink-soft: #a3aeaa;
+  --ink-faint: #7c8783;
+  --accent: #4cbfa1;
+  --accent-hover: #6ed3b7;
+  --accent-ink: #06231d;
+  --accent-soft: #14312a;
+  --positive: #4cbf85;
+  --caution: #d9a441;
+  --danger: #ef8080;
+  --danger-soft: #2c1a1a;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-caution: var(--caution);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  body {
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-transparent px-3.5 py-2
+      text-sm font-medium whitespace-nowrap transition-colors
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    background-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--accent-hover);
+  }
+
+  .btn-ghost {
+    @apply border-line bg-surface text-ink-soft;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--surface-sunken);
+    color: var(--ink);
+  }
+
+  .btn-danger {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
+      placeholder:text-ink-faint focus:border-accent focus:outline-none;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold tracking-wide text-ink-soft uppercase;
+  }
+
+  .card {
+    @apply rounded-xl border border-line bg-surface;
+  }
+
+  .scroll-area {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+/* Notulensi datang sebagai HTML hasil render Markdown di server. */
+.minutes-body {
+  @apply prose prose-sm max-w-none;
+  --tw-prose-body: var(--ink-soft);
+  --tw-prose-headings: var(--ink);
+  --tw-prose-bold: var(--ink);
+  --tw-prose-bullets: var(--line-strong);
+  --tw-prose-quotes: var(--ink-soft);
+  --tw-prose-quote-borders: var(--accent);
+  --tw-prose-th-borders: var(--line-strong);
+  --tw-prose-td-borders: var(--line);
+  --tw-prose-links: var(--accent);
+  --tw-prose-code: var(--ink);
+  --tw-prose-hr: var(--line);
+  --tw-prose-counters: var(--ink-faint);
+}
+
+.minutes-body :is(h1, h2, h3) {
+  font-family: var(--font-serif);
+}
+
+.minutes-body h2 {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.3rem;
+}
+
+.minutes-body table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

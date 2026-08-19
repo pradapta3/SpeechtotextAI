@@ -1,128 +1,215 @@
-# 🎙️ NotulensiAI
+# NotulensiAI
 
-**Transkripsi audio rapat tanpa batas ukuran & durasi. Buat notulensi profesional otomatis dengan AI.**
+Aplikasi Laravel untuk mentranskripsi rekaman rapat tanpa batas durasi, lalu mengubah transkrip
+mentah menjadi notulensi rapat yang rapi.
 
-Dibangun untuk dijalankan sepenuhnya via GitHub Pages — tanpa server, tanpa backend, tanpa batasan upload.
+Versi sebelumnya berupa satu berkas HTML statis yang menyimpan API key di `localStorage` dan
+mengirimkannya langsung dari browser. Versi ini memindahkan seluruh pemanggilan API ke sisi server,
+menyimpan hasilnya di basis data, dan merender Markdown notulensi di server.
 
 ---
 
-## ✨ Fitur
+## Cara kerja
 
-| Fitur | Keterangan |
+```
+Browser                                  Laravel                         Layanan
+───────                                  ───────                         ───────
+decode audio (Web Audio API)
+  │
+  ├─ potong per segmen + resample ──►  POST /api/recordings
+  │   16 kHz mono WAV                    (buat catatan rekaman)
+  │
+  └─ kirim segmen satu per satu ─────►  POST /api/recordings/{id}/chunks ──► Groq Whisper
+                                          simpan segmen, hitung progres
+                                                    │
+                                        POST /api/recordings/{id}/minutes ──► Claude
+                                          simpan notulensi (Markdown → HTML)
+```
+
+- **Pemotongan di browser.** Berkas audio didekode, dipotong, dan di-*resample* menjadi WAV 16 kHz
+  mono sebelum diunggah. Ukuran unggahan jadi ±1,9 MB per menit audio, sehingga berkas rapat berjam-jam
+  tetap bisa diproses tanpa menyentuh batas ukuran unggahan.
+- **Daftar ringan, detail sesuai kebutuhan.** Halaman awal hanya memuat ringkasan tiap rekaman;
+  transkrip, segmen, dan notulensi diambil lewat `GET /api/recordings/{id}` saat rekaman dibuka.
+- **API key hanya di server.** Browser tidak pernah memegang API key. Bila pengguna mengisi key
+  sendiri di halaman Pengaturan, key itu dienkripsi dengan `APP_KEY` dan disimpan di session server —
+  bukan di `localStorage`.
+- **Tanpa login.** Tiap browser mendapat kunci acak di session; rekaman hanya bisa diakses dari
+  session yang membuatnya.
+- **Tahan rate limit.** Saat Groq membalas `429`, server meneruskan `Retry-After` ke browser dan
+  browser mengulang segmen yang sama setelah menunggu — proses tidak diulang dari awal.
+
+---
+
+## Beberapa pengguna sekaligus
+
+Aplikasi ini tidak memakai login, tetapi tiap browser tetap terpisah penuh:
+
+- **Kepemilikan.** Setiap browser mendapat kunci acak (UUID) di session server. Rekaman diikat ke
+  kunci itu, dan pencarian rekaman selalu dibatasi kunci milik pemanggil — membuka id rekaman orang
+  lain menghasilkan 404, bukan transkripnya.
+- **Preferensi dan API key** (bahasa, durasi segmen, key milik pengguna) juga per session.
+- **Penulisan bersamaan.** Kolom segmen ditulis dengan pola baca-ubah-tulis di dalam transaksi yang
+  membaca ulang datanya, sehingga dua permintaan yang tumpang tindih tidak saling menghapus hasil.
+- **SQLite disetel untuk banyak penulis** (`WAL`, `busy_timeout`, transaksi `IMMEDIATE` — lihat
+  `config/database.php`). Tanpa setelan ini, unggahan segmen dari dua orang serentak gagal dengan
+  `database is locked`.
+
+Uji yang dijalankan: dua sesi browser mengunggah berkas berbeda dan mentranskripsikannya bersamaan —
+masing-masing hanya melihat rekamannya sendiri; lalu 10 unggahan segmen paralel ke satu rekaman —
+seluruh 10 segmen tersimpan tanpa satu pun hilang.
+
+Catatan penerapan:
+
+| Hal | Anjuran |
 |---|---|
-| 📁 **Upload tak terbatas** | Tidak ada batas jumlah file, ukuran file, atau durasi rekaman |
-| ✂️ **Auto chunking** | File audio panjang otomatis dipotong per segmen ~55 detik, diproses berurutan, lalu digabung |
-| 🎙️ **Transkripsi akurat** | Menggunakan OpenAI Whisper (model terbaik untuk Bahasa Indonesia) |
-| ✨ **Notulensi AI** | Claude mengubah transkrip kasar menjadi notulensi profesional terstruktur |
-| 🔒 **Privasi terjaga** | Semua proses audio di browser — API key tidak pernah meninggalkan perangkat Anda |
-| 📥 **Export fleksibel** | Salin atau unduh transkrip (.txt) dan notulensi (.md) |
-| 🌐 **Antarmuka modern** | Dark mode, responsive, live progress saat transkripsi berlangsung |
+| Server | `php artisan serve` hanya melayani satu permintaan pada satu waktu. Untuk dipakai bersama, jalankan di belakang nginx + PHP-FPM, atau setel `PHP_CLI_SERVER_WORKERS`. |
+| Basis data | SQLite cukup untuk satu tim kecil. Untuk puluhan pengguna serentak, pindah ke MySQL/PostgreSQL — cukup ganti `DB_CONNECTION`. |
+| Masa session | `SESSION_LIFETIME` menentukan berapa lama riwayat rekaman tetap bisa dibuka (bawaan repo ini 14 hari). |
+| Kuota API | Bila memakai satu key server, seluruh pengguna berbagi kuota Groq/Anthropic yang sama. |
 
----
+## Antarmuka
 
-## 🚀 Cara Deploy ke GitHub Pages
+Tiap bagian layar dibuat untuk menjawab pertanyaan yang muncul saat menunggu proses panjang:
 
-### 1. Fork / Clone repo ini
+| Bagian | Yang ditampilkan |
+|---|---|
+| Kepala berkas | durasi, ukuran, bahasa, segmen selesai/total, jumlah kata, waktu ditambahkan |
+| Kartu progres | segmen ke berapa, persentase, waktu berjalan, perkiraan sisa, rata-rata per segmen |
+| Statistik transkrip | jumlah kata, karakter, jumlah × durasi segmen, waktu selesai |
+| Tampilan per segmen | penanda waktu `00:00–02:00` untuk mencocokkan hasil dengan audio asli |
+| Daftar periksa | langkah yang sudah beres dan yang belum, beserta petunjuk tindakannya |
+| Jejak notulensi | model yang dipakai, waktu pembuatan, panjang hasil |
+| Pengaturan | sumber tiap API key, model aktif, ukuran per segmen, permintaan per jam audio, batas unggah server |
+
+Tema mengikuti sistem secara bawaan dan bisa dikunci ke terang atau gelap.
+
+## Kebutuhan
+
+| Komponen | Versi |
+|---|---|
+| PHP | 8.3+ (`ext-sqlite3` bila memakai SQLite) |
+| Composer | 2.x |
+| Node.js | 20+ |
+
+## Instalasi
 
 ```bash
-git clone https://github.com/username/notulensi-ai.git
-cd notulensi-ai
+git clone <repo-ini>
+cd SpeechtotextAI
+
+composer install
+cp .env.example .env
+php artisan key:generate
+touch database/database.sqlite
+php artisan migrate
+
+npm install
+npm run build
+
+php artisan serve
 ```
 
-### 2. Push ke GitHub
+Buka `http://localhost:8000`, lalu isi API key di tab **Pengaturan** (atau isi `.env`, lihat di bawah).
+
+Untuk pengembangan dengan hot reload: `npm run dev` di terminal terpisah.
+
+---
+
+## Konfigurasi
+
+Semua opsi ada di `config/notulensi.php` dan bisa ditimpa lewat `.env`:
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `GROQ_API_KEY` | — | Key transkripsi. Gratis di [console.groq.com/keys](https://console.groq.com/keys) |
+| `GROQ_MODEL` | `whisper-large-v3-turbo` | Model Whisper di Groq |
+| `ANTHROPIC_API_KEY` | — | Key untuk pembuatan notulensi |
+| `ANTHROPIC_MODEL` | `claude-opus-5` | Model Claude |
+| `ANTHROPIC_EFFORT` | `medium` | `low` … `max`; makin tinggi makin teliti dan makin mahal |
+| `NOTULENSI_ALLOW_USER_KEYS` | `true` | Bila `false`, pengguna wajib memakai key dari server |
+| `NOTULENSI_DEFAULT_LANGUAGE` | `id` | Bahasa audio default |
+| `NOTULENSI_CHUNK_SECONDS` | `60` | Durasi tiap segmen |
+| `NOTULENSI_MAX_RECORDINGS` | `50` | Batas rekaman tersimpan per session |
+
+API key boleh diisi lewat `.env` (dipakai semua pengguna) atau lewat halaman Pengaturan (berlaku untuk
+session pengguna itu saja dan menimpa key server).
+
+### Durasi segmen dan batas unggahan PHP
+
+Satu detik audio = 32 KB (16 kHz × 16 bit mono), jadi segmen 60 detik ≈ 1,9 MB. Bawaan PHP
+(`upload_max_filesize = 2M`) hanya cukup untuk sekitar 65 detik; aplikasi membaca batas tersebut,
+menurunkan pilihan durasi segmen secara otomatis, dan menampilkan angka maksimumnya di halaman
+Pengaturan. Untuk segmen yang lebih panjang (lebih sedikit permintaan API), naikkan di `php.ini`:
+
+```ini
+upload_max_filesize = 20M
+post_max_size = 24M
+```
+
+---
+
+## Pengujian
 
 ```bash
-git add .
-git commit -m "Initial deploy"
-git push origin main
+php artisan test          # 44 pengujian: HTTP, integrasi Groq & Anthropic, model, prompt
+./vendor/bin/pint         # format kode
+npm run build             # kompilasi aset
 ```
 
-### 3. Aktifkan GitHub Pages
-
-1. Buka repo di GitHub → **Settings** → **Pages**
-2. Source: **Deploy from a branch**
-3. Branch: `main` / `root`
-4. Klik **Save**
-
-Website akan tersedia di: `https://username.github.io/notulensi-ai`
+Pengujian tidak menyentuh jaringan: panggilan Groq dipalsukan dengan `Http::fake()`
+(plus `Http::preventStrayRequests()`), sedangkan SDK Anthropic memakai transport PSR-18 palsu
+(`tests/Support/FakeTransporter.php`) sehingga bentuk permintaan dan penanganan penolakan model
+tetap teruji.
 
 ---
 
-## 🔑 API Keys yang Diperlukan
-
-### OpenAI API Key (Wajib — untuk Transkripsi)
-
-1. Buka [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-2. Klik **Create new secret key**
-3. Salin key, masukkan di tab **Pengaturan** aplikasi
-
-**Estimasi biaya Whisper:**
-- 1 jam audio ≈ $0.36
-- 2 jam audio ≈ $0.72
-- 7 rekaman × rata-rata 1.5 jam ≈ $3.78 total
-
-### Anthropic API Key (Opsional — untuk Notulensi AI)
-
-1. Buka [console.anthropic.com](https://console.anthropic.com)
-2. Buat API key baru
-3. Masukkan di tab **Pengaturan** aplikasi
-
-**Estimasi biaya Claude:**
-- Per rapat ≈ $0.02–0.05 (sangat murah)
-
----
-
-## 📖 Cara Penggunaan
+## Struktur
 
 ```
-1. Buka website → tab Pengaturan → masukkan API key → Simpan
-2. Upload file audio dari sidebar kiri (boleh banyak sekaligus)
-3. Klik "Mulai Transkripsi"
-4. Tunggu proses (live progress terlihat di layar)
-5. Salin atau unduh transkrip
-6. (Opsional) Tab Notulensi → isi info rapat → "Buat Notulensi"
-```
-
-**Durasi proses estimasi:**
-- 1 jam audio ≈ 65 segmen ≈ 3–6 menit proses
-- 2 jam audio ≈ 130 segmen ≈ 6–12 menit proses
-
----
-
-## 🗂 Struktur File
-
-```
-notulensi-ai/
-├── index.html          # Halaman utama (single-page app)
-├── css/
-│   └── style.css       # Stylesheet
+app/
+├── Enums/RecordingStatus.php            status rekaman
+├── Exceptions/                          error transkripsi & notulensi (punya render() sendiri)
+├── Http/
+│   ├── Controllers/                     Home, Recording, TranscriptionChunk, Minutes, Settings
+│   └── Requests/                        aturan validasi tiap endpoint
+├── Models/Recording.php                 rekaman + segmen transkrip
+├── Services/
+│   ├── Minutes/                         prompt + integrasi Claude (SDK resmi)
+│   └── Transcription/GroqTranscriber    pengirim segmen ke Groq
+└── Support/                             kredensial, preferensi, batas unggah, Markdown
+resources/
+├── css/app.css                          token tema terang/gelap + komponen Tailwind
 ├── js/
-│   ├── transcriber.js  # Engine audio chunking & Whisper API
-│   ├── notulensi.js    # Generator notulensi via Claude API
-│   └── app.js          # UI logic & state management
-└── README.md
+│   ├── audio/                           dekode, pemotongan, resample, encoder WAV
+│   ├── api.js                           pembungkus fetch + CSRF + penanganan error
+│   └── notulensi.js                     state UI (Alpine)
+└── views/                               halaman utama + partial
+tests/
+├── Feature/                             endpoint HTTP dan integrasi layanan
+└── Unit/                                model & penyusunan prompt
 ```
 
 ---
 
-## ⚙️ Teknis
+## Perubahan dari versi statis
 
-- **Transkripsi**: OpenAI Whisper API (`whisper-1` model)
-- **Chunking**: Web Audio API — file decode di browser, dipotong per 55 detik
-- **Notulensi**: Anthropic Claude (`claude-sonnet-4-20250514`)
-- **Storage**: `localStorage` (hanya untuk menyimpan API key di browser lokal)
-- **Hosting**: GitHub Pages (static) — tidak butuh server
+| Sebelumnya | Sekarang |
+|---|---|
+| API key di `localStorage`, dikirim dari browser | Key di server (`.env` atau session terenkripsi) |
+| Markdown dirender dengan rangkaian regex | Dirender server-side dengan CommonMark, HTML mentah dibuang |
+| Nama berkas dimasukkan ke DOM lewat `innerHTML` | Template Alpine (teks selalu di-escape) |
+| Segmen 20–25 detik, WAV stereo penuh | Segmen sampai menit, WAV 16 kHz mono (±6× lebih kecil) |
+| `cancel()` hanya menandai variabel; `fetch` tetap jalan | `AbortController` membatalkan permintaan dan jeda tunggu |
+| Durasi segmen tidak ikut tersimpan | Seluruh preferensi tersimpan di session |
+| Hasil hilang saat halaman dimuat ulang | Transkrip & notulensi tersimpan di basis data |
+| Tab tanpa peran ARIA, dropzone tak bisa diakses keyboard | `role="tab"`, dropzone berupa `<button>`, live region, fokus terlihat |
+| Hanya tema gelap | Tema terang/gelap/ikut sistem |
+| Status berupa ikon emoji tanpa keterangan | Lencana status, metadata berkas, statistik, dan perkiraan waktu selesai |
+| Transkrip hanya satu blok teks | Bisa dilihat per segmen dengan penanda waktu |
 
 ---
 
-## 🔐 Keamanan
+## Lisensi
 
-- API key **disimpan di `localStorage` browser Anda sendiri** — tidak dikirim ke server manapun selain OpenAI/Anthropic
-- File audio diproses sepenuhnya di browser sebelum dikirim ke Whisper
-- Tidak ada data yang disimpan di cloud kami (karena tidak ada server kami)
-
----
-
-## 📝 Lisensi
-
-MIT License — bebas digunakan, dimodifikasi, dan didistribusikan.
+MIT.
