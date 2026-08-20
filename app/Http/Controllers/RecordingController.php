@@ -21,6 +21,7 @@ class RecordingController extends Controller
         return response()->json([
             'recordings' => Recording::query()
                 ->ownedBy($this->owner->key())
+                ->withCount('segments')
                 ->latest('id')
                 ->get()
                 ->map->toSummary(),

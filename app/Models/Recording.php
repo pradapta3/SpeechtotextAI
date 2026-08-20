@@ -8,9 +8,10 @@ use App\Enums\RecordingStatus;
 use App\Support\Markdown;
 use Database\Factories\RecordingFactory;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property int $id
@@ -22,7 +23,7 @@ use Illuminate\Support\Facades\DB;
  * @property int $chunk_seconds
  * @property RecordingStatus $status
  * @property int $total_chunks
- * @property array<int, array{index: int, start: float, end: float, text: string}> $segments
+ * @property Collection<int, RecordingSegment> $segments
  * @property string|null $error
  * @property string|null $minutes
  */
@@ -48,7 +49,6 @@ class Recording extends Model
     {
         return [
             'status' => RecordingStatus::class,
-            'segments' => 'array',
             'size_bytes' => 'integer',
             'duration_seconds' => 'float',
             'chunk_seconds' => 'integer',
@@ -61,7 +61,6 @@ class Recording extends Model
 
     protected $attributes = [
         'status' => RecordingStatus::Pending->value,
-        'segments' => '[]',
     ];
 
     /** @param  Builder<self>  $query */
@@ -70,43 +69,44 @@ class Recording extends Model
         $query->where('owner_key', $ownerKey);
     }
 
+    /** @return HasMany<RecordingSegment, $this> */
+    public function segments(): HasMany
+    {
+        return $this->hasMany(RecordingSegment::class)->orderBy('position');
+    }
+
     /**
      * Simpan hasil satu segmen.
      *
-     * Segmen dikunci pada indeksnya, sehingga pengiriman ulang (mis. setelah
-     * rate limit) menimpa segmen lama alih-alih menduplikasi teks.
-     *
-     * Kolom `segments` ditulis dengan pola baca-ubah-tulis, jadi dua permintaan
-     * yang tumpang tindih bisa saling menghapus hasil. Transaksi menutup celah
-     * itu: pada MySQL/PostgreSQL lewat `lockForUpdate()`, dan pada SQLite —
-     * yang mengabaikan klausa tersebut — lewat mode transaksi IMMEDIATE yang
-     * disetel di config/database.php.
+     * Satu pernyataan upsert, tanpa baca-ubah-tulis: indeks unik
+     * (recording_id, position) yang menentukan apakah segmen dibuat atau
+     * ditimpa. Pengiriman ulang segmen yang sama — misalnya setelah menunggu
+     * rate limit — menimpa barisnya, bukan menambah duplikat, dan dua unggahan
+     * yang bersamaan tidak saling menunggu karena masing-masing menulis baris
+     * yang berbeda.
      */
     public function storeSegment(int $index, float $startSeconds, float $endSeconds, string $text): void
     {
-        DB::transaction(function () use ($index, $startSeconds, $endSeconds, $text): void {
-            $fresh = static::query()->lockForUpdate()->findOrFail($this->getKey());
+        $this->segments()->upsert(
+            [[
+                'recording_id' => $this->getKey(),
+                'position' => $index,
+                'start_seconds' => round($startSeconds, 2),
+                'end_seconds' => round($endSeconds, 2),
+                'text' => $text,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]],
+            ['recording_id', 'position'],
+            ['start_seconds', 'end_seconds', 'text', 'updated_at'],
+        );
 
-            $this->segments = collect($fresh->segments)
-                ->keyBy('index')
-                ->put($index, [
-                    'index' => $index,
-                    'start' => round($startSeconds, 2),
-                    'end' => round($endSeconds, 2),
-                    'text' => $text,
-                ])
-                ->sortKeys()
-                ->values()
-                ->all();
-
-            $this->save();
-        });
+        $this->unsetRelation('segments');
     }
 
     public function transcript(): string
     {
-        return collect($this->segments)
-            ->sortBy('index')
+        return $this->segments
             ->pluck('text')
             ->map(fn (?string $text): string => trim((string) $text))
             ->filter()
@@ -115,7 +115,15 @@ class Recording extends Model
 
     public function completedChunks(): int
     {
-        return count($this->segments);
+        // Daftar rekaman memuat jumlahnya lewat withCount() agar tidak
+        // menjalankan satu kueri tambahan per baris.
+        if (array_key_exists('segments_count', $this->attributes)) {
+            return (int) $this->attributes['segments_count'];
+        }
+
+        return $this->relationLoaded('segments')
+            ? $this->segments->count()
+            : $this->segments()->count();
     }
 
     public function progressPercent(): int
@@ -178,16 +186,7 @@ class Recording extends Model
     {
         return array_merge($this->toSummary(), [
             'loaded' => true,
-            'segments' => collect($this->segments)
-                ->sortBy('index')
-                ->map(fn (array $segment): array => [
-                    'index' => $segment['index'],
-                    'start' => $segment['start'],
-                    'end' => $segment['end'],
-                    'text' => $segment['text'],
-                ])
-                ->values()
-                ->all(),
+            'segments' => $this->segments->map->toPayload()->all(),
             'transcript' => $this->transcript(),
             'word_count' => $this->wordCount(),
             'minutes' => $this->minutes,

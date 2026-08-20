@@ -51,6 +51,10 @@ return [
              *              pola baca-ubah-tulis (kolom segments) tidak gagal saat
              *              menaikkan kunci di tengah transaksi — kondisi yang
              *              tidak ikut ditunggu oleh busy_timeout.
+             *
+             * Catatan: Laravel hanya menerapkan transaction_mode pada PHP 8.4+.
+             * Di PHP 8.2/8.3 transaksi tetap DEFERRED, karena itu penulisan
+             * segmen juga dibungkus percobaan ulang (lihat Recording::storeSegment).
              */
             'busy_timeout' => env('DB_BUSY_TIMEOUT', 10000),
             'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),

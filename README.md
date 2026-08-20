@@ -49,15 +49,24 @@ Aplikasi ini tidak memakai login, tetapi tiap browser tetap terpisah penuh:
   kunci itu, dan pencarian rekaman selalu dibatasi kunci milik pemanggil — membuka id rekaman orang
   lain menghasilkan 404, bukan transkripnya.
 - **Preferensi dan API key** (bahasa, durasi segmen, key milik pengguna) juga per session.
-- **Penulisan bersamaan.** Kolom segmen ditulis dengan pola baca-ubah-tulis di dalam transaksi yang
-  membaca ulang datanya, sehingga dua permintaan yang tumpang tindih tidak saling menghapus hasil.
+- **Penulisan bersamaan.** Tiap segmen menempati barisnya sendiri dan ditulis dengan satu pernyataan
+  atomik, sehingga dua permintaan yang tumpang tindih tidak saling menghapus hasil.
 - **SQLite disetel untuk banyak penulis** (`WAL`, `busy_timeout`, transaksi `IMMEDIATE` — lihat
   `config/database.php`). Tanpa setelan ini, unggahan segmen dari dua orang serentak gagal dengan
   `database is locked`.
+- **Cache memakai berkas, bukan basis data** (`CACHE_STORE=file`). Penghitung rate limit menulis ke
+  cache setiap permintaan; bila cache-nya ikut di SQLite, penghitung itu berebut kunci tulis dengan
+  unggahan segmen.
+
+Tiap segmen menempati satu baris di tabel `recording_segments` dengan indeks unik
+`(recording_id, position)` dan ditulis dengan satu pernyataan *upsert*. Tidak ada pola
+baca-ubah-tulis, sehingga dua unggahan yang bersamaan tidak pernah saling menimpa maupun
+saling mengunci.
 
 Uji yang dijalankan: dua sesi browser mengunggah berkas berbeda dan mentranskripsikannya bersamaan —
 masing-masing hanya melihat rekamannya sendiri; lalu 10 unggahan segmen paralel ke satu rekaman —
-seluruh 10 segmen tersimpan tanpa satu pun hilang.
+seluruh 10 segmen tersimpan, tanpa satu pun permintaan gagal, termasuk saat transaksi dipaksa ke
+mode `DEFERRED` (perilaku SQLite di PHP 8.2/8.3).
 
 Catatan penerapan:
 
@@ -86,13 +95,18 @@ Tema mengikuti sistem secara bawaan dan bisa dikunci ke terang atau gelap.
 
 ## Kebutuhan
 
-| Komponen | Versi |
-|---|---|
-| PHP | 8.3+ (`ext-sqlite3` bila memakai SQLite) |
-| Composer | 2.x |
-| Node.js | 20+ |
+| Komponen | Versi | Catatan |
+|---|---|---|
+| PHP | **8.2 – 8.4** | Ekstensi `sqlite3`, `mbstring`, `curl`, `openssl`, `fileinfo` — semuanya aktif secara bawaan di XAMPP |
+| Composer | 2.x | |
+| Node.js | 20+ | Hanya untuk membangun aset (CSS/JS) |
+
+Cek versi PHP Anda dengan `php -v`. Bila di bawah 8.2, perbarui PHP (mis. XAMPP 8.2 ke atas)
+sebelum melanjutkan — `composer install` akan menolak memasang.
 
 ## Instalasi
+
+### Linux / macOS
 
 ```bash
 git clone <repo-ini>
@@ -109,6 +123,35 @@ npm run build
 
 php artisan serve
 ```
+
+### Windows (PowerShell)
+
+Perintah `cp` dan `touch` tidak ada di PowerShell, jadi pakai padanannya:
+
+```powershell
+git clone <repo-ini>
+cd SpeechtotextAI
+
+composer install
+Copy-Item .env.example .env
+php artisan key:generate
+New-Item database\database.sqlite -ItemType File -Force
+php artisan migrate
+
+npm.cmd install
+npm.cmd run build
+
+php artisan serve
+```
+
+Dua hal yang sering menghadang di Windows:
+
+- **`npm : ... cannot be loaded because running scripts is disabled on this system`.**
+  PowerShell memblokir skrip `npm.ps1`. Cara tercepat: panggil `npm.cmd` seperti di atas.
+  Alternatif permanen (sekali saja, tidak butuh hak admin):
+  `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
+- **`php` tidak dikenali.** Tambahkan folder PHP XAMPP (mis. `C:\xampp\php`) ke PATH, atau jalankan
+  perintahnya lewat `C:\xampp\php\php.exe`.
 
 Buka `http://localhost:8000`, lalu isi API key di tab **Pengaturan** (atau isi `.env`, lihat di bawah).
 

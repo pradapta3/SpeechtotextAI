@@ -25,15 +25,12 @@ class RecordingFactory extends Factory
             'chunk_seconds' => 120,
             'total_chunks' => 2,
             'status' => RecordingStatus::Pending,
-            'segments' => [],
         ];
     }
 
     public function transcribed(string $text = 'Rapat dibuka pukul sembilan pagi.'): self
     {
-        return $this->state(fn (): array => [
-            'status' => RecordingStatus::Completed,
-            'segments' => [['index' => 0, 'start' => 0, 'end' => 120, 'text' => $text]],
-        ]);
+        return $this->state(fn (): array => ['status' => RecordingStatus::Completed])
+            ->afterCreating(fn (Recording $recording) => $recording->storeSegment(0, 0, 120, $text));
     }
 }

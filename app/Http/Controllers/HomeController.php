@@ -20,6 +20,7 @@ class HomeController extends Controller
                 // /api/recordings/{id} saat rekaman dibuka.
                 'recordings' => Recording::query()
                     ->ownedBy($owner->key())
+                    ->withCount('segments')
                     ->latest('id')
                     ->get()
                     ->map->toSummary()
