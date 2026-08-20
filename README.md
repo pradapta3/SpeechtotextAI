@@ -118,11 +118,12 @@ php artisan key:generate
 touch database/database.sqlite
 php artisan migrate
 
-npm install
-npm run build
-
 php artisan serve
 ```
+
+Aset CSS/JS hasil build sudah disertakan di `public/build`, jadi `npm` hanya diperlukan bila Anda
+mengubah berkas di `resources/`. Bila mengubahnya: `npm install && npm run build`, lalu sertakan
+hasil build-nya saat commit.
 
 ### Windows (PowerShell)
 
@@ -138,13 +139,15 @@ php artisan key:generate
 New-Item database\database.sqlite -ItemType File -Force
 php artisan migrate
 
-npm.cmd install
-npm.cmd run build
-
 php artisan serve
 ```
 
-Dua hal yang sering menghadang di Windows:
+Perhatikan tidak ada langkah `npm` di atas: hasil build CSS/JS ikut disertakan di `public/build`,
+jadi aplikasi bisa langsung dijalankan. Node.js hanya diperlukan bila Anda mengubah berkas di
+`resources/css` atau `resources/js` — sesudah mengubahnya jalankan `npm.cmd install` lalu
+`npm.cmd run build`, dan ikut sertakan hasil build-nya saat commit.
+
+Hal-hal yang sering menghadang di Windows:
 
 - **`npm : ... cannot be loaded because running scripts is disabled on this system`.**
   PowerShell memblokir skrip `npm.ps1`. Cara tercepat: panggil `npm.cmd` seperti di atas.
@@ -152,6 +155,14 @@ Dua hal yang sering menghadang di Windows:
   `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
 - **`php` tidak dikenali.** Tambahkan folder PHP XAMPP (mis. `C:\xampp\php`) ke PATH, atau jalankan
   perintahnya lewat `C:\xampp\php\php.exe`.
+- **`npm error UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.** Jaringan kantor menyadap koneksi TLS sehingga
+  sertifikat registry npm tidak dikenali. Anda bisa mengabaikannya — aset sudah tersedia di
+  `public/build`. Bila memang perlu membangun ulang, arahkan npm ke sertifikat perusahaan
+  (`npm config set cafile C:\path\ke\ca-perusahaan.pem`); menonaktifkan `strict-ssl` juga
+  menyelesaikannya, tapi berarti mematikan verifikasi sertifikat.
+- **`vite is not recognized`.** `npm install` belum berhasil, jadi `node_modules` kosong. Hapus
+  foldernya (`Remove-Item node_modules -Recurse -Force`) lalu ulangi setelah masalah sertifikat di
+  atas beres — atau lewati saja karena aset sudah tersedia.
 
 Buka `http://localhost:8000`, lalu isi API key di tab **Pengaturan** (atau isi `.env`, lihat di bawah).
 
